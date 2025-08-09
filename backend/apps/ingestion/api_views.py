@@ -1,40 +1,31 @@
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from apps.core.models import Session, Athlete, SensorSample
 import csv, io
-from datetime import datetime, timedelta
-from django.shortcuts import render, redirect
-from django.views import View
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import JsonResponse
-from apps.core.models import Session, SensorSample, Athlete
+from datetime import datetime
 
-class UploadCSVView(LoginRequiredMixin, View):
-    def get(self, request):
-        return render(request, 'frontend/upload.html')
+class CSVUploadAPI(APIView):
+    parser_classes = (MultiPartParser, FormParser)
+    permission_classes = (IsAuthenticated,)
 
-    def post(self, request):
-        csvfile = request.FILES.get('file')
-        athlete_id = request.POST.get('athlete_id')
-        started_at = request.POST.get('started_at')
-        if not csvfile:
-            return JsonResponse({'error': 'no file'}, status=400)
+    def post(self, request, format=None):
+        f = request.FILES.get('file')
+        athlete_id = request.data.get('athlete_id')
+        if not f or not athlete_id:
+            return Response({'detail': 'file and athlete_id required'}, status=400)
 
-        athlete = Athlete.objects.get(id=athlete_id)
-        session = Session.objects.create(
-            athlete=athlete,
-            started_at=started_at or datetime.now(),
-            raw_file=csvfile,
-        )
+        athlete = Athlete.objects.get(pk=athlete_id)
+        session = Session.objects.create(athlete=athlete, started_at=datetime.now(), raw_file=f)
 
-        text = csvfile.read().decode('utf-8')
+        text = f.read().decode('utf-8')
         reader = csv.reader(io.StringIO(text))
-        headers = next(reader, None)  # timestamp,s0,s1,...
+        headers = next(reader, None)
         for row in reader:
-            ts_str = row[0]
-            try:
-                ts = datetime.fromisoformat(ts_str)
-            except Exception:
-                ts = session.started_at + timedelta(seconds=float(ts_str))
-            sensors = {f's{i}': float(val) if val else None for i, val in enumerate(row[1:])}
+            ts = datetime.fromisoformat(row[0])
+            sensors = {f's{i}': float(v) if v else None for i, v in enumerate(row[1:])}
             SensorSample.objects.create(session=session, timestamp=ts, sensors=sensors)
 
-        return redirect('upload')
+        return Response({'session_id': session.id})
 
